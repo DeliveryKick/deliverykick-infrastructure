@@ -1,0 +1,82 @@
+# Infrastructure Repository .gitignore
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Environment-specific configs (secrets)
+.env
+.env.*
+!.env.example
+
+# AWS Credentials
+aws-credentials.json
+credentials.json
+
+# Generated configuration files with secrets
+aurora-config/
+aurora-config-secure/
+*.env.prod
+*.env.staging
+*.env.dev
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+
+# Secrets and passwords
+secrets/
+*.secret
+passwords.txt
+
+# Backup files
+*.backup
+*.bak
+*.dump
+*.sql
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
+*~
+
+# Kubernetes secrets
+k8s-secrets/
+*.kubeconfig
+
+# Database dumps
+*.dump
+*.sql.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# Node
+node_modules/
