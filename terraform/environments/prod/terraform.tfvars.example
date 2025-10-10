@@ -1,0 +1,22 @@
+# Example Terraform Variables for Production
+# Copy this file to terraform.tfvars and fill in your values
+
+aws_region = "us-east-1"
+
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+aurora_cluster_identifier = "deliverykick-prod-cluster"
+aurora_master_username    = "postgres"
+# aurora_master_password - Set via TF_VAR_aurora_master_password or AWS Secrets Manager
+aurora_min_capacity = 0.5
+aurora_max_capacity = 2
+
+# SSL Certificate (optional - leave null to use HTTP only)
+certificate_arn = null  # "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/xxx"
+enable_https_redirect = false
+
+# Django allowed hosts
+allowed_hosts = "*.deliverykick.com,deliverykick.com"

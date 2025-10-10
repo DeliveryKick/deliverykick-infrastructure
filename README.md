@@ -73,6 +73,12 @@ deliverykick-infrastructure/
 
 ## Quick Start
 
+> **Amazon Linux / EC2 Users:**
+> - **Super Quick:** [QUICKSTART_AMAZON_LINUX.md](QUICKSTART_AMAZON_LINUX.md) (30-45 min total setup)
+> - **Detailed:** [docs/SETUP_AMAZON_LINUX.md](docs/SETUP_AMAZON_LINUX.md)
+>
+> **macOS Users:** Continue with instructions below
+
 ### Initial Setup
 
 1. **Create Aurora Cluster** (one-time):

@@ -1,0 +1,10 @@
+ORG="DeliveryKick"
+RULESET_NAME="Protected main/develop"
+
+
+# Create org-level ruleset
+gh api \
+  --method POST \
+  -H "Accept: application/vnd.github+json" \
+  "/orgs/$ORG/rulesets" \
+  --input ruleset.json

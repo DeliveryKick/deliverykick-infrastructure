@@ -1,0 +1,216 @@
+# GitHub Actions Workflow for Ordering App
+#
+# Copy this file to: Ordering-Delivery-and-Payment-Backend/.github/workflows/deploy.yml
+#
+# This workflow:
+# 1. Runs tests
+# 2. Builds Docker image
+# 3. Pushes to ECR
+# 4. Deploys to ECS
+# 5. Optionally runs migrations
+
+name: Build and Deploy Ordering App
+
+on:
+  push:
+    branches:
+      - main      # Deploy production on main branch
+      - develop   # Deploy dev environment on develop branch
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: deliverykick-ordering
+  ECS_CLUSTER: deliverykick-prod-cluster
+  ECS_SERVICE: deliverykick-prod-ordering
+  CONTAINER_NAME: ordering
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run tests
+        run: |
+          python manage.py test
+        env:
+          DJANGO_SETTINGS_MODULE: core.settings.test
+          DATABASE_URL: sqlite:///test.db
+
+  build-and-deploy:
+    name: Build and Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set environment variables
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+            echo "ECS_CLUSTER=deliverykick-prod-cluster" >> $GITHUB_ENV
+            echo "ECS_SERVICE=deliverykick-prod-ordering" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=deliverykick-ordering" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENT=dev" >> $GITHUB_ENV
+            echo "ECS_CLUSTER=deliverykick-dev-cluster" >> $GITHUB_ENV
+            echo "ECS_SERVICE=deliverykick-dev-ordering" >> $GITHUB_ENV
+            echo "ECR_REPOSITORY=deliverykick-ordering-dev" >> $GITHUB_ENV
+          fi
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build Docker image
+          docker build -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG .
+
+          # Push with commit SHA tag
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+
+          # Also push with 'latest' tag
+          docker tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+
+          # Output image URI for next step
+          echo "image=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition deliverykick-${{ env.ENVIRONMENT }}-ordering \
+            --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ordering
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed successfully!"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo "Image: ${{ steps.build-image.outputs.image }}"
+
+          # Get service details
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].deployments' \
+            --output table
+
+  run-migrations:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run migrations via ECS Exec
+        run: |
+          # Get a running task ID
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster deliverykick-prod-cluster \
+            --service-name deliverykick-prod-ordering \
+            --desired-status RUNNING \
+            --query 'taskArns[0]' \
+            --output text)
+
+          if [ "$TASK_ARN" != "None" ]; then
+            echo "Running migrations on task: $TASK_ARN"
+
+            # Run migrations
+            aws ecs execute-command \
+              --cluster deliverykick-prod-cluster \
+              --task $TASK_ARN \
+              --container ordering \
+              --interactive \
+              --command "python manage.py migrate --noinput"
+          else
+            echo "No running tasks found. Migrations will run on next deployment."
+          fi
+
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    needs: [build-and-deploy, run-migrations]
+    if: always()
+
+    steps:
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL }}
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Ordering App Deployment",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deployment Status:* ${{ needs.build-and-deploy.result }}\n*Environment:* ${{ github.ref == 'refs/heads/main' && 'Production' || 'Development' }}\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
